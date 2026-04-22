@@ -344,11 +344,22 @@ html, body {
     </div>
   </div>
   <div class="api-key-row">
-    <span class="api-key-label">Anthropic API Key</span>
+    <select class="provider-select" id="providerSelect" onchange="onProviderChange(this.value)">
+      <option value="anthropic">🤖 Claude (Anthropic)</option>
+      <option value="openai">💚 OpenAI (GPT-4o)</option>
+      <option value="gemini">🔵 Gemini (Google)</option>
+      <option value="deepseek">🟣 DeepSeek</option>
+      <option value="azure">☁️ Azure OpenAI</option>
+    </select>
     <div class="key-badge" id="keyBadge"></div>
     <input type="password" class="api-key-input" id="apiKeyInput"
-      placeholder="sk-ant-api03-..." autocomplete="off"
+      placeholder="Enter API key..." autocomplete="off"
       oninput="onKeyInput(this.value)">
+    <div id="azureEndpointWrap" style="display:none">
+      <input type="text" class="api-key-input" id="azureEndpoint"
+        placeholder="https://YOUR.openai.azure.com/..." autocomplete="off"
+        style="width:220px">
+    </div>
   </div>
 </div>
 
@@ -537,10 +548,110 @@ html, body {
 let fileData      = null;
 let fileInfo      = {};
 let apiKey        = '';
+let provider      = 'anthropic';
+let azureEndpoint = '';
 let results       = {};
 let timerInterval = null;
 let startTime     = null;
 let isRunning     = false;
+
+// Provider config — endpoints, headers, response parsing
+const PROVIDERS = {
+  anthropic: {
+    name: 'Claude (Anthropic)',
+    placeholder: 'sk-ant-api03-...',
+    endpoint: 'https://api.anthropic.com/v1/messages',
+    buildRequest: (key, prompt) => ({
+      url: 'https://api.anthropic.com/v1/messages',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    }),
+    parseResponse: (data) => data.content?.[0]?.text || ''
+  },
+  openai: {
+    name: 'OpenAI (GPT-4o)',
+    placeholder: 'sk-...',
+    endpoint: 'https://api.openai.com/v1/chat/completions',
+    buildRequest: (key, prompt) => ({
+      url: 'https://api.openai.com/v1/chat/completions',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + key
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    }),
+    parseResponse: (data) => data.choices?.[0]?.message?.content || ''
+  },
+  gemini: {
+    name: 'Gemini (Google)',
+    placeholder: 'AIza...',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+    buildRequest: (key, prompt) => ({
+      url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + key,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 2000, temperature: 0.3 }
+      })
+    }),
+    parseResponse: (data) => {
+      // Handle both response shapes Gemini returns
+      const candidate = data.candidates?.[0];
+      if (!candidate) return '';
+      return candidate.content?.parts?.[0]?.text
+          || candidate.output
+          || '';
+    }
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    placeholder: 'sk-...',
+    endpoint: 'https://api.deepseek.com/v1/chat/completions',
+    buildRequest: (key, prompt) => ({
+      url: 'https://api.deepseek.com/v1/chat/completions',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + key
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    }),
+    parseResponse: (data) => data.choices?.[0]?.message?.content || ''
+  },
+  azure: {
+    name: 'Azure OpenAI',
+    placeholder: 'Your Azure OpenAI API key...',
+    endpoint: '',
+    buildRequest: (key, prompt, endpoint) => ({
+      url: endpoint + '/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': key
+      },
+      body: JSON.stringify({
+        max_tokens: 2000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    }),
+    parseResponse: (data) => data.choices?.[0]?.message?.content || ''
+  }
+};
 
 // Catch ALL unhandled promise rejections and show them
 window.addEventListener('unhandledrejection', function(ev) {
@@ -553,13 +664,31 @@ window.addEventListener('unhandledrejection', function(ev) {
 });
 
 // ════════════════════════════════════════════
-// API KEY — accept ANY non-empty key, warn if wrong format
+// PROVIDER + API KEY
 // ════════════════════════════════════════════
+function onProviderChange(val) {
+  provider = val;
+  const cfg = PROVIDERS[val] || PROVIDERS.anthropic;
+  document.getElementById('apiKeyInput').placeholder = cfg.placeholder;
+  // Show/hide Azure endpoint field
+  document.getElementById('azureEndpointWrap').style.display = val === 'azure' ? 'block' : 'none';
+  // Update agent card subtitle to show selected provider
+  document.querySelectorAll('.agent-name').forEach(el => {
+    if (el.textContent.includes('Claude') || el.textContent.includes('Gemini') ||
+        el.textContent.includes('GPT') || el.textContent.includes('DeepSeek')) {
+      el.textContent = '💡 FinOps Recommender';
+    }
+  });
+  checkRunnable();
+}
+
 function onKeyInput(val) {
   apiKey = val.trim();
+  if (document.getElementById('azureEndpoint')) {
+    azureEndpoint = document.getElementById('azureEndpoint').value.trim();
+  }
   const badge = document.getElementById('keyBadge');
-  const looks_valid = apiKey.length > 20;
-  badge.classList.toggle('active', looks_valid);
+  badge.classList.toggle('active', apiKey.length > 10);
   checkRunnable();
 }
 
@@ -652,20 +781,18 @@ function showFileConfirmed() {
 
 function checkRunnable() {
   const hasFile = fileData && fileData.length > 0;
-  const hasKey  = apiKey.length > 20;
-  const btn = document.getElementById('runBtn');
-  btn.disabled = !(hasFile && hasKey) || isRunning;
+  const hasKey  = apiKey.length > 10;
+  const hasAzureEndpoint = provider !== 'azure' || (azureEndpoint && azureEndpoint.startsWith('http'));
+  const ready   = hasFile && hasKey && hasAzureEndpoint;
+  const btn     = document.getElementById('runBtn');
+  btn.disabled  = !ready || isRunning;
 
-  // Update button text to reflect what's missing
-  if (!hasFile && !hasKey) {
-    btn.querySelector('.btn-label').textContent = 'Upload file & enter API key to start';
-  } else if (!hasFile) {
-    btn.querySelector('.btn-label').textContent = 'Upload CUR file to start';
-  } else if (!hasKey) {
-    btn.querySelector('.btn-label').textContent = 'Enter Anthropic API key to start';
-  } else {
-    btn.querySelector('.btn-label').textContent = 'Run AI Analysis';
-  }
+  const lbl = btn.querySelector('.btn-label');
+  if (!hasFile && !hasKey)          { lbl.textContent = 'Upload file & enter API key to start'; }
+  else if (!hasFile)                { lbl.textContent = 'Upload a CUR file to continue'; }
+  else if (!hasKey)                 { lbl.textContent = 'Enter your API key to continue'; }
+  else if (!hasAzureEndpoint)       { lbl.textContent = 'Enter Azure OpenAI endpoint URL'; }
+  else                              { lbl.textContent = 'Run AI Analysis'; }
 }
 
 // ════════════════════════════════════════════
@@ -685,7 +812,8 @@ async function runAgents() {
   startTimer();
   log('info', '⚡ CBO FinOps AI Agent Pipeline starting...');
   log('',     '📁 File: ' + fileInfo.name + ' · ' + fileInfo.rows.toLocaleString() + ' rows · ' + fileInfo.cols + ' columns');
-  log('',     '🔑 API key: ' + apiKey.slice(0, 12) + '...' + apiKey.slice(-4));
+  const pName = (PROVIDERS[provider] || PROVIDERS.anthropic).name;
+    log('',     '🤖 Provider: ' + pName + ' · Key: ' + apiKey.slice(0,8) + '...');
 
   try {
     // ── AGENT 1: CUR Parser ──────────────────
@@ -766,39 +894,41 @@ async function runAgents() {
 }
 
 // ════════════════════════════════════════════
-// CLAUDE API CALL — with full error surfacing
+// UNIVERSAL AI CALL — supports all providers
 // ════════════════════════════════════════════
 async function callClaude(prompt, agentName) {
-  log('', '[' + agentName + '] Sending request to Claude API... (' + Math.round(prompt.length / 1000) + 'KB prompt)');
+  const cfg = PROVIDERS[provider] || PROVIDERS.anthropic;
+  const endpoint = provider === 'azure' ? azureEndpoint : cfg.endpoint;
+
+  if (provider === 'azure' && !azureEndpoint) {
+    throw new Error('Azure OpenAI: Please enter your endpoint URL (e.g. https://YOUR.openai.azure.com/)');
+  }
+
+  log('', '[' + agentName + '] → ' + cfg.name + ' (' + Math.round(prompt.length / 1000) + 'KB prompt)');
+
+  const reqCfg = provider === 'azure'
+    ? cfg.buildRequest(apiKey, prompt, azureEndpoint)
+    : cfg.buildRequest(apiKey, prompt);
 
   let resp;
   try {
-    resp = await fetch('https://api.anthropic.com/v1/messages', {
+    resp = await fetch(reqCfg.url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }]
-      })
+      headers: reqCfg.headers,
+      body: reqCfg.body
     });
   } catch (networkErr) {
-    throw new Error('Network error — cannot reach Anthropic API. Check internet connection. (' + networkErr.message + ')');
+    throw new Error('Network error reaching ' + cfg.name + '. Check your internet connection. (' + networkErr.message + ')');
   }
 
   if (!resp.ok) {
-    let errMsg = 'HTTP ' + resp.status;
+    let errMsg = 'HTTP ' + resp.status + ' from ' + cfg.name;
     try {
       const errBody = await resp.json();
-      errMsg = errBody.error?.message || errMsg;
-      if (resp.status === 401) errMsg = 'Invalid API key (401). Check your key at console.anthropic.com';
-      if (resp.status === 429) errMsg = 'Rate limited (429). Wait a moment and try again.';
-      if (resp.status === 400) errMsg = 'Bad request (400): ' + errMsg;
+      errMsg = (errBody.error?.message || errBody.message || JSON.stringify(errBody)).slice(0, 200);
+      if (resp.status === 401) errMsg = 'Invalid API key (401) for ' + cfg.name + '. Check your key is correct.';
+      if (resp.status === 403) errMsg = 'Access denied (403) for ' + cfg.name + '. Check key permissions.';
+      if (resp.status === 429) errMsg = 'Rate limited (429) by ' + cfg.name + '. Wait a moment and try again.';
     } catch (_) {}
     throw new Error(errMsg);
   }
@@ -807,12 +937,12 @@ async function callClaude(prompt, agentName) {
   try {
     data = await resp.json();
   } catch (parseErr) {
-    throw new Error('Could not parse API response: ' + parseErr.message);
+    throw new Error('Could not parse response from ' + cfg.name + ': ' + parseErr.message);
   }
 
-  const text = data.content?.[0]?.text;
-  if (!text) throw new Error('Empty response from API — no content returned.');
-  log('', '[' + agentName + '] ✓ Response received (' + Math.round(text.length / 100) / 10 + 'KB)');
+  const text = cfg.parseResponse(data);
+  if (!text) throw new Error('Empty response from ' + cfg.name + '. Try again or check your API quota.');
+  log('', '[' + agentName + '] ✓ Response from ' + cfg.name + ' (' + Math.round(text.length / 100) / 10 + 'KB)');
   return text;
 }
 
@@ -1271,14 +1401,46 @@ function downloadPDF() {
 </div>
 </body></html>`;
 
-  const win = window.open('', '_blank');
-  if (!win) {
-    showError('Pop-up blocked! Allow pop-ups for this page and try again.');
-    return;
+  // Method 1: Blob URL download (works everywhere, no popup needed)
+  try {
+    const blob   = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url    = URL.createObjectURL(blob);
+    const now2   = new Date().toISOString().slice(0,10);
+    const fname  = 'FinOps-CUR-Report-' + now2 + '.html';
+
+    // Open in new tab — user can print-to-PDF from there (Ctrl+P → Save as PDF)
+    const tab = window.open(url, '_blank');
+    if (tab) {
+      // Show print dialog after a short delay for render
+      tab.addEventListener('load', function() {
+        setTimeout(function() {
+          // Add a print button + auto-prompt to the opened tab
+          tab.document.body.insertAdjacentHTML('afterbegin',
+            '<div style="position:fixed;top:0;left:0;right:0;background:#0D1B2A;color:#fff;padding:10px 20px;' +
+            'display:flex;align-items:center;justify-content:space-between;z-index:9999;font-family:DM Sans,sans-serif;font-size:13px">' +
+            '<span>📄 FinOps Report — ready to save as PDF</span>' +
+            '<div style="display:flex;gap:10px">' +
+            '<button onclick="window.print()" style="background:#00B4D8;color:#0D1B2A;border:none;padding:8px 18px;' +
+            'border-radius:6px;font-weight:700;cursor:pointer;font-size:13px">🖨️ Print / Save as PDF</button>' +
+            '<a href="' + url + '" download="' + fname + '" style="background:#10B981;color:#fff;border:none;' +
+            'padding:8px 18px;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px;text-decoration:none">' +
+            '⬇️ Download HTML</a></div></div>'
+          );
+          setTimeout(function() { tab.print(); }, 1200);
+        }, 600);
+      });
+    } else {
+      // Fallback: direct download if popup blocked
+      const a   = document.createElement('a');
+      a.href    = url;
+      a.download = fname;
+      a.click();
+      showError('Popup was blocked — HTML report downloaded instead. Open it and press Ctrl+P → Save as PDF.');
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+  } catch(e) {
+    showError('PDF generation failed: ' + e.message);
   }
-  win.document.write(html);
-  win.document.close();
-  win.onload = function() { setTimeout(function(){ win.print(); }, 800); };
 }
 
 function buildRoadmapHTML(roadmap) {
@@ -1351,9 +1513,14 @@ function stopTimer() { clearInterval(timerInterval); }
 // Initial state check on page load
 document.addEventListener('DOMContentLoaded', function() {
   checkRunnable();
-  // If API key already filled (e.g. browser autofill), validate it
   const keyEl = document.getElementById('apiKeyInput');
   if (keyEl && keyEl.value) onKeyInput(keyEl.value);
+  // Wire Azure endpoint input
+  const azEl = document.getElementById('azureEndpoint');
+  if (azEl) azEl.addEventListener('input', function() {
+    azureEndpoint = this.value.trim();
+    checkRunnable();
+  });
 });
 
 </script>
