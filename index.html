@@ -337,7 +337,7 @@ html, body {
 <!-- TOP BAR -->
 <div class="topbar">
   <div class="topbar-brand">
-    <div class="topbar-tag">CBO FinOps</div>
+    <div class="topbar-tag">FinOps</div>
     <div>
       <div class="topbar-title">Azure CUR · AI Analyser</div>
       <div class="topbar-sub">Upload · Analyse · Download PDF Report</div>
@@ -810,7 +810,7 @@ async function runAgents() {
   hideError();
 
   startTimer();
-  log('info', '⚡ CBO FinOps AI Agent Pipeline starting...');
+  log('info', '⚡ FinOps AI Agent Pipeline starting...');
   log('',     '📁 File: ' + fileInfo.name + ' · ' + fileInfo.rows.toLocaleString() + ' rows · ' + fileInfo.cols + ' columns');
   const pName = (PROVIDERS[provider] || PROVIDERS.anthropic).name;
     log('',     '🤖 Provider: ' + pName + ' · Key: ' + apiKey.slice(0,8) + '...');
@@ -1105,7 +1105,7 @@ DATA:
 - By Pricing Model: ${JSON.stringify(spendSummary.byPricing)}
 - Tag Coverage: ${spendSummary.tagCoverage ? JSON.stringify(spendSummary.tagCoverage) : 'No tag data'}
 
-Write a professional spend analysis for a Cloud Business Office (CBO) executive audience. Include:
+Write a professional spend analysis for a Cloud Business Office executive audience. Include:
 1. Headline total spend with context
 2. Top 3 subscriptions driving cost (with $ amounts and % of total)
 3. Top 3 services/meter categories (with $ amounts and % of total)
@@ -1340,7 +1340,7 @@ function downloadPDF() {
 </head>
 <body>
 <div class="cover">
-  <div class="cover-tag">CBO FinOps · Confidential</div>
+  <div class="cover-tag">FinOps · Confidential</div>
   <div class="cover-title">Azure Cloud Cost<br>Optimisation Report</div>
   <div class="cover-sub">AI-Powered CUR Analysis · Quick Win Recommendations</div>
   <div class="cover-meta">
@@ -1348,14 +1348,14 @@ function downloadPDF() {
     <strong>Rows Analysed:</strong> ${fileInfo.rows.toLocaleString()}<br>
     <strong>Generated:</strong> ${now}<br>
     <strong>Framework:</strong> FinOps Foundation Framework<br>
-    <strong>Classification:</strong> Confidential — CBO Internal
+    <strong>Classification:</strong> Confidential — Internal
   </div>
 </div>
 
 <div>
   <h2>Executive Summary</h2>
   <div class="exec-box">
-    <div class="exec-lbl">CBO Leadership Summary</div>
+    <div class="exec-lbl">FinOps Leadership Summary</div>
     <div class="exec-txt">${(reco.executiveSummary || 'See full analysis.').replace(/</g,'&lt;')}</div>
   </div>
 
